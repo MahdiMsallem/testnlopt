@@ -1,0 +1,65 @@
+name: Build NLopt Java (Windows)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java (x64)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          architecture: x64
+
+      - name: Install build tools (CMake + SWIG)
+        run: |
+          choco install -y cmake swig
+          cmake --version
+          swig -version
+
+      - name: Download NLopt v2.10.0 source
+        run: |
+          curl -L -o nlopt.tar.gz https://github.com/stevengj/nlopt/archive/refs/tags/v2.10.0.tar.gz
+          tar -xf nlopt.tar.gz
+          dir
+
+      - name: Configure (CMake)
+        run: |
+          mkdir build
+          cd build
+          cmake ..\nlopt-2.10.0 -A x64 -DCMAKE_BUILD_TYPE=Release -DNLOPT_OCTAVE=OFF -DNLOPT_MATLAB=OFF
+
+      - name: Build (Release)
+        run: |
+          cmake --build build --config Release
+
+      - name: Collect artifacts (jar + dll)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          $dll = Get-ChildItem -Recurse -Path build -Filter "nloptjni.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $jar = Get-ChildItem -Recurse -Path build -Filter "*.jar" -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match "nlopt" } | Select-Object -First 1
+
+          if (-not $dll) { throw "nloptjni.dll not found in build output." }
+          if (-not $jar) { throw "No nlopt*.jar found in build output." }
+
+          Copy-Item $dll.FullName dist\
+          Copy-Item $jar.FullName dist\
+
+          Write-Host "Collected:"
+          Get-ChildItem dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nlopt-java-windows
+          path: dist/*
