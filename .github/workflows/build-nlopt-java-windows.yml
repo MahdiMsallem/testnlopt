@@ -1,4 +1,4 @@
-name: Build NLopt Java (Windows, Java 8 compatible, portable)
+name: NLopt 2.10.0 - Java 8 - Windows portable (jar + dll)
 
 on:
   workflow_dispatch:
@@ -19,30 +19,30 @@ jobs:
           java-version: "8"
           architecture: x64
 
-      - name: Show Java version
-        shell: powershell
+      - name: Show Java versions
+        shell: pwsh
         run: |
           java -version
           javac -version
 
       - name: Install tools (CMake + SWIG)
-        shell: powershell
+        shell: pwsh
         run: |
           choco install -y cmake swig
           cmake --version
           swig -version
 
       - name: Download NLopt v2.10.0 source
-        shell: powershell
+        shell: pwsh
         run: |
           $url = "https://github.com/stevengj/nlopt/archive/refs/tags/v2.10.0.tar.gz"
           Invoke-WebRequest -Uri $url -OutFile nlopt.tar.gz
           tar -xf nlopt.tar.gz
-          dir
+          Get-ChildItem
 
-      # /MT to reduce dependency on MSVC redistributables on the target PC
+      # /MT to reduce need for MSVC redistributables on target machine
       - name: Configure (CMake) - MSVC static runtime (/MT)
-        shell: powershell
+        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path build | Out-Null
           cmake -S nlopt-2.10.0 -B build -A x64 `
@@ -51,35 +51,34 @@ jobs:
             -DNLOPT_OCTAVE=OFF -DNLOPT_MATLAB=OFF
 
       - name: Build (Release)
-        shell: powershell
+        shell: pwsh
         run: |
           cmake --build build --config Release
 
-      - name: Collect artifacts (Java 8 jar + dlls)
-        shell: powershell
+      - name: Collect outputs (jar + dlls)
+        shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-          # JNI dll
           $jni = Get-ChildItem -Recurse -Path build -Filter "nloptjni.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $jni) { throw "nloptjni.dll not found. Java bindings may not have been built." }
           Copy-Item $jni.FullName dist\
 
-          # Core nlopt dll (if present)
+          # Core dll if it exists (sometimes needed)
           $core = Get-ChildItem -Recurse -Path build -Filter "nlopt.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($core) { Copy-Item $core.FullName dist\ }
 
-          # jar (rename to nlopt.jar)
+          # Pick jar and rename to nlopt.jar
           $jar = Get-ChildItem -Recurse -Path build -Filter "*.jar" -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -match "nlopt" } | Select-Object -First 1
           if (-not $jar) { throw "nlopt*.jar not found in build output." }
           Copy-Item $jar.FullName dist\nlopt.jar
 
           Write-Host "=== DIST CONTENTS ==="
-          Get-ChildItem dist
+          Get-ChildItem dist | Format-Table Name, Length
 
-      - name: Upload package
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nlopt-java-windows-java8-portable
+          name: nlopt-2.10.0-java8-windows-portable
           path: dist/*
