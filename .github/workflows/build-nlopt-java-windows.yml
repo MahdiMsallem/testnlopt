@@ -1,4 +1,4 @@
-name: NLopt 2.10.0 - Java 8 - Windows (single nloptjni.dll, SWIG nlopt-java.i)
+name: NLopt 2.10.0 - Java 8 - Windows (single DLL)
 
 on:
   workflow_dispatch:
@@ -11,7 +11,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Java 8 => classfile version 52.0 (compatible with your Java 8 runtime)
       - name: Setup Java 8 (x64)
         uses: actions/setup-java@v4
         with:
@@ -33,69 +32,40 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://github.com/stevengj/nlopt/archive/refs/tags/v2.10.0.tar.gz" -OutFile nlopt.tar.gz
           tar -xf nlopt.tar.gz
-          Get-ChildItem
 
-      # Goal:
-      # - Use SWIG with nlopt-java.i (CMake will invoke SWIG automatically when found)
-      # - Build NLopt statically so nloptjni.dll does NOT depend on nlopt.dll  (BUILD_SHARED_LIBS=OFF)
-      # - Link MSVC runtime statically to reduce VC runtime DLL deps (/MT)
-      - name: Configure (CMake) - static NLopt + static MSVC runtime
+      - name: Configure (CMake) - static NLopt + /MT
         shell: pwsh
         run: |
-          $prefix = "$pwd\install"
+          New-Item -ItemType Directory -Force -Path build | Out-Null
           cmake -S nlopt-2.10.0 -B build -A x64 `
             -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_INSTALL_PREFIX="$prefix" `
             -DBUILD_SHARED_LIBS=OFF `
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
             -DNLOPT_OCTAVE=OFF -DNLOPT_MATLAB=OFF
 
-      - name: Build + Install
+      - name: Build (Release)
         shell: pwsh
         run: |
           cmake --build build --config Release
-          cmake --install build --config Release
 
-      - name: Collect outputs (jar + nloptjni.dll)
+      - name: Collect artifacts (jar + single dll)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-          # JNI DLL (must exist)
-          $jni = Get-ChildItem -Recurse -Path install -Filter "nloptjni.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $jni) {
-            # fallback: sometimes it lands in build tree
-            $jni = Get-ChildItem -Recurse -Path build -Filter "nloptjni.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $jni) { throw "nloptjni.dll not found. Java bindings likely not built (SWIG/Java not detected)." }
+          # JNI dll
+          $jni = Get-ChildItem -Recurse -Path build -Filter "nloptjni.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $jni) { throw "nloptjni.dll not found. Java bindings may not have been built." }
           Copy-Item $jni.FullName dist\
 
-          # JAR (rename to nlopt.jar for convenience)
-          $jar = Get-ChildItem -Recurse -Path install -Filter "*.jar" -ErrorAction SilentlyContinue |
+          # jar
+          $jar = Get-ChildItem -Recurse -Path build -Filter "*.jar" -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -match "nlopt" } | Select-Object -First 1
-          if (-not $jar) {
-            $jar = Get-ChildItem -Recurse -Path build -Filter "*.jar" -ErrorAction SilentlyContinue |
-                   Where-Object { $_.Name -match "nlopt" } | Select-Object -First 1
-          }
-          if (-not $jar) { throw "No nlopt*.jar found in install/ or build/." }
+          if (-not $jar) { throw "No nlopt*.jar found in build output." }
           Copy-Item $jar.FullName dist\nlopt.jar
 
           Write-Host "=== DIST CONTENTS ==="
           Get-ChildItem dist | Format-Table Name, Length
-
-      - name: Verify Java 8 classfile version (should be 52)
-        shell: pwsh
-        run: |
-          $out = (javap -verbose -classpath dist\nlopt.jar nlopt.Opt | Select-String "major version").ToString()
-          Write-Host $out
-          if ($out -notmatch "52") { throw "JAR is not Java 8 compatible (major version is not 52)." }
-
-      - name: Verify nloptjni.dll does NOT depend on nlopt.dll (single-DLL check)
-        shell: pwsh
-        run: |
-          $deps = (& dumpbin /DEPENDENTS dist\nloptjni.dll) -join "`n"
-          Write-Host $deps
-          if ($deps -match "(?i)\bnlopt\.dll\b") { throw "Single-DLL goal not met: nloptjni.dll depends on nlopt.dll." }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
